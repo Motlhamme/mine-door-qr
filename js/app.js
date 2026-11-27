@@ -67,8 +67,10 @@ const App = {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ companyNo, password })
         });
-        const data = await res.json();
+        let data = {};
+        try { data = await res.json(); } catch (_) { throw new Error('Server error – try again'); }
         if (!res.ok) throw new Error(data.error || 'Login failed');
+        if (!data.user || !data.token) throw new Error('Invalid server response');
         this.user = data.user;
         this.token = data.token;
         await this.saveSession();
@@ -76,8 +78,8 @@ const App = {
           this.showPasswordModal();
         } else {
           this.showMain();
-          this.toast('Welcome, ' + this.user.name);
-          Offline.sendPresence();
+          this.toast('Welcome, ' + (this.user.name || this.user.companyNo));
+          if (window.Offline) Offline.sendPresence();
         }
       } else {
         // Offline fallback: only if previously logged in with same company number
@@ -140,8 +142,10 @@ const App = {
     document.getElementById('screen-main')?.classList.remove('active');
     const modal = document.getElementById('modal-password');
     if (modal) modal.classList.remove('hidden');
-    document.getElementById('new-password').value = '';
-    document.getElementById('new-password2').value = '';
+    const p1 = document.getElementById('new-password');
+    const p2 = document.getElementById('new-password2');
+    if (p1) p1.value = '';
+    if (p2) p2.value = '';
     document.getElementById('pw-error')?.classList.add('hidden');
   },
 
@@ -180,9 +184,10 @@ const App = {
   updateHeader() {
     const badge = document.getElementById('user-badge');
     const navUser = document.getElementById('nav-user');
-    if (this.user) {
-      badge.textContent = this.user.name.split(' ')[0];
-      navUser.innerHTML = `<strong>${this.user.name}</strong><br><small>${this.roleLabel(this.user.role)}</small>`;
+    if (this.user && badge && navUser) {
+      const first = (this.user.name || this.user.companyNo || 'User').split(' ')[0];
+      badge.textContent = first;
+      navUser.innerHTML = `<strong>${this.user.name || ''}</strong><br><small>${this.roleLabel(this.user.role)}</small>`;
     }
   },
 
@@ -317,10 +322,14 @@ const App = {
 
   // ---------- Home ----------
   async renderHome() {
-    document.getElementById('home-name').textContent = this.user.name;
-    document.getElementById('home-role').textContent = this.roleLabel(this.user.role);
+    if (!this.user) return;
+    const homeName = document.getElementById('home-name');
+    const homeRole = document.getElementById('home-role');
+    if (homeName) homeName.textContent = this.user.name || '';
+    if (homeRole) homeRole.textContent = this.roleLabel(this.user.role);
 
     const actions = document.getElementById('quick-actions');
+    if (!actions) return;
     actions.innerHTML = '';
     const add = (label, view) => {
       const b = document.createElement('button');

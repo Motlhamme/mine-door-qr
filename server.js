@@ -24,8 +24,16 @@ function hashPassword(password, salt) {
 }
 
 function verifyPassword(password, salt, hash) {
-  const check = crypto.scryptSync(password, salt, 64).toString('hex');
-  return crypto.timingSafeEqual(Buffer.from(check, 'hex'), Buffer.from(hash, 'hex'));
+  try {
+    if (!password || !salt || !hash) return false;
+    const check = crypto.scryptSync(password, salt, 64).toString('hex');
+    const a = Buffer.from(check, 'hex');
+    const b = Buffer.from(hash, 'hex');
+    if (a.length !== b.length) return false;
+    return crypto.timingSafeEqual(a, b);
+  } catch (_) {
+    return false;
+  }
 }
 
 function makeToken(userId) {
@@ -49,8 +57,6 @@ function getUserFromToken(req) {
 
 // ---------- Seed default users (company numbers) ----------
 function seedUsers(db) {
-  if (db.users && db.users.length > 0) return db;
-
   const defaults = [
     { companyNo: 'ADMIN001', name: 'System Admin', role: 'admin', password: 'admin123' },
     { companyNo: 'VE001', name: 'Ventilation Engineer', role: 'vent_engineer', password: 'vent123' },
@@ -65,22 +71,41 @@ function seedUsers(db) {
     { companyNo: 'VO003', name: 'Vent Officer 3', role: 'vent_officer', password: 'officer123' }
   ];
 
-  db.users = defaults.map(u => {
-    const { salt, hash } = hashPassword(u.password);
-    return {
-      id: crypto.randomUUID(),
-      companyNo: u.companyNo.toUpperCase(),
-      name: u.name,
-      role: u.role,
-      salt,
-      passwordHash: hash,
-      active: true,
-      mustChangePassword: false,
-      createdAt: new Date().toISOString()
-    };
-  });
-  save(db);
-  console.log('[Seed] Default users created. See DEMO_LOGINS.md for credentials.');
+  if (!db.users) db.users = [];
+  let changed = false;
+  for (const u of defaults) {
+    const companyNo = u.companyNo.toUpperCase();
+    const existing = db.users.find(x => x.companyNo === companyNo);
+    if (!existing) {
+      const { salt, hash } = hashPassword(u.password);
+      db.users.push({
+        id: crypto.randomUUID(),
+        companyNo,
+        name: u.name,
+        role: u.role,
+        salt,
+        passwordHash: hash,
+        active: true,
+        mustChangePassword: false,
+        createdAt: new Date().toISOString()
+      });
+      changed = true;
+    } else if (!existing.salt || !existing.passwordHash) {
+      // Repair broken users missing password data
+      const { salt, hash } = hashPassword(u.password);
+      existing.salt = salt;
+      existing.passwordHash = hash;
+      existing.role = existing.role || u.role;
+      existing.name = existing.name || u.name;
+      existing.active = existing.active !== false;
+      existing.mustChangePassword = !!existing.mustChangePassword;
+      changed = true;
+    }
+  }
+  if (changed) {
+    save(db);
+    console.log('[Seed] Users created/repaired. See DEMO_LOGINS.md for credentials.');
+  }
   return db;
 }
 
@@ -182,18 +207,26 @@ async function handleApi(req, res, pathname) {
   }
 
   if (pathname === '/api/login' && method === 'POST') {
-    const body = await parseBody(req);
-    const companyNo = (body.companyNo || '').toString().trim().toUpperCase();
-    const password = (body.password || '').toString();
-    if (!companyNo || !password) {
-      return send(res, 400, { error: 'Company number and password required' });
+    try {
+      const body = await parseBody(req);
+      const companyNo = (body.companyNo || '').toString().trim().toUpperCase();
+      const password = (body.password || '').toString();
+      if (!companyNo || !password) {
+        return send(res, 400, { error: 'Company number and password required' });
+      }
+      const user = db.users.find(u => u.companyNo === companyNo && u.active !== false);
+      if (!user || !user.salt || !user.passwordHash) {
+        return send(res, 401, { error: 'Invalid company number or password' });
+      }
+      if (!verifyPassword(password, user.salt, user.passwordHash)) {
+        return send(res, 401, { error: 'Invalid company number or password' });
+      }
+      const token = makeToken(user.id);
+      return send(res, 200, { token, user: publicUser(user) });
+    } catch (e) {
+      console.error('[login]', e);
+      return send(res, 500, { error: 'Login failed. Please try again.' });
     }
-    const user = db.users.find(u => u.companyNo === companyNo && u.active !== false);
-    if (!user || !verifyPassword(password, user.salt, user.passwordHash)) {
-      return send(res, 401, { error: 'Invalid company number or password' });
-    }
-    const token = makeToken(user.id);
-    return send(res, 200, { token, user: publicUser(user) });
   }
 
   if (pathname === '/api/me' && method === 'GET') {
