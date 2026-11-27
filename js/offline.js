@@ -97,9 +97,12 @@ const Offline = {
       }
       unsynced.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
 
+      const headers = (window.App && App.authHeaders)
+        ? App.authHeaders()
+        : { 'Content-Type': 'application/json' };
       const res = await fetch(this.apiBase + '/api/events', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify(unsynced)
       });
       if (!res.ok) throw new Error('Server ' + res.status);
@@ -145,9 +148,12 @@ const Offline = {
   async sendPresence() {
     if (!window.App || !window.App.user || !navigator.onLine) return;
     try {
+      const headers = (window.App && App.authHeaders)
+        ? App.authHeaders()
+        : { 'Content-Type': 'application/json' };
       await fetch(this.apiBase + '/api/presence', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           userId: App.user.id,
           name: App.user.name,

@@ -14,26 +14,23 @@
 </head>
 <body>
   <div id="app">
-    <!-- Login / Role Select -->
+    <!-- Login -->
     <section id="screen-login" class="screen active">
       <div class="login-card">
         <div class="logo">⛏️</div>
         <h1>Mine Door QR</h1>
         <p class="subtitle">Offline-first door control</p>
 
-        <label>Your Name</label>
-        <input id="input-name" type="text" placeholder="e.g. Thabo Molefe" autocomplete="name" />
+        <label>Company Number</label>
+        <input id="input-company" type="text" placeholder="e.g. SB001" autocomplete="username" autocapitalize="characters" />
 
-        <label>Select Role</label>
-        <div class="role-grid">
-          <button class="role-btn" data-role="admin">Admin<br><small>Create QR codes</small></button>
-          <button class="role-btn" data-role="vent_officer">Vent Officer<br><small>Paste QR stickers</small></button>
-          <button class="role-btn" data-role="shift_boss">Shift Boss<br><small>Close doors</small></button>
-          <button class="role-btn" data-role="vent_engineer">Vent Engineer<br><small>Live dashboard</small></button>
-          <button class="role-btn" data-role="mine_captain">Mine Captain<br><small>Assign doors</small></button>
-        </div>
+        <label>Password</label>
+        <input id="input-password" type="password" placeholder="Your password" autocomplete="current-password" />
 
-        <p class="hint">Demo mode – data stays on this device. Works fully offline.</p>
+        <button id="btn-login" class="btn primary full" style="margin-top:18px">Log In</button>
+        <p id="login-error" class="login-error hidden"></p>
+
+        <p class="hint">Use your company number and password. Contact Admin for access.</p>
       </div>
     </section>
 
@@ -59,7 +56,8 @@
         <button data-view="doors" class="nav-item">All Doors</button>
         <button data-view="dashboard" class="nav-item role-vent_engineer role-mine_captain">Dashboard</button>
         <button data-view="assign" class="nav-item role-mine_captain">Assign Doors</button>
-        <button id="btn-logout" class="nav-item logout">Switch Role</button>
+        <button data-view="users" class="nav-item role-admin">Manage Users</button>
+        <button id="btn-logout" class="nav-item logout">Log Out</button>
       </nav>
 
       <main id="main-content">
@@ -181,7 +179,48 @@
           </div>
           <div id="sticker-sheet" class="sticker-sheet"></div>
         </div>
+
+        <!-- Manage Users (Admin) -->
+        <div id="view-users" class="view">
+          <div class="card">
+            <h2>Create User</h2>
+            <label>Company Number *</label>
+            <input id="user-company" type="text" placeholder="e.g. SB004" autocapitalize="characters" />
+            <label>Full Name *</label>
+            <input id="user-name" type="text" placeholder="e.g. John Dlamini" />
+            <label>Role *</label>
+            <select id="user-role">
+              <option value="vent_officer">Vent Officer</option>
+              <option value="shift_boss">Shift Boss</option>
+              <option value="mine_captain">Mine Captain</option>
+              <option value="vent_engineer">Vent Engineer</option>
+              <option value="admin">Admin</option>
+            </select>
+            <label>Temporary Password *</label>
+            <input id="user-password" type="text" placeholder="Min 4 characters" />
+            <p class="muted small">User must change this password on first login.</p>
+            <button id="btn-create-user" class="btn primary full">Create User</button>
+          </div>
+          <div class="card">
+            <h2>All Users</h2>
+            <div id="users-list" class="door-list"></div>
+          </div>
+        </div>
       </main>
+
+  <!-- Force password change modal -->
+  <div id="modal-password" class="modal hidden">
+    <div class="modal-card">
+      <h2>Change Password</h2>
+      <p class="muted">You must set a new password before continuing.</p>
+      <label>New Password</label>
+      <input id="new-password" type="password" placeholder="Min 4 characters" />
+      <label>Confirm Password</label>
+      <input id="new-password2" type="password" placeholder="Repeat password" />
+      <p id="pw-error" class="login-error hidden"></p>
+      <button id="btn-save-password" class="btn primary full">Save &amp; Continue</button>
+    </div>
+  </div>
     </section>
   </div>
 

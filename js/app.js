@@ -25,11 +25,87 @@ const App = {
     const session = await DB.getSession();
     if (session && session.user) {
       this.user = session.user;
+      this.token = session.token || null;
+      // Validate token with server if online
+      if (this.token && navigator.onLine) {
+        try {
+          const res = await fetch('/api/me', { headers: { 'Authorization': 'Bearer ' + this.token } });
+          if (res.ok) {
+            this.user = await res.json();
+          } else {
+            this.user = null;
+            this.token = null;
+            await DB.clearSession();
+          }
+        } catch (_) {}
+      }
     }
   },
 
   async saveSession() {
-    await DB.setSession({ user: this.user });
+    await DB.setSession({ user: this.user, token: this.token });
+  },
+
+  async login() {
+    const companyNo = (document.getElementById('input-company')?.value || '').trim();
+    const password = document.getElementById('input-password')?.value || '';
+    const errEl = document.getElementById('login-error');
+    if (errEl) { errEl.classList.add('hidden'); errEl.textContent = ''; }
+
+    if (!companyNo || !password) {
+      if (errEl) { errEl.textContent = 'Enter company number and password'; errEl.classList.remove('hidden'); }
+      return;
+    }
+
+    const btn = document.getElementById('btn-login');
+    if (btn) { btn.disabled = true; btn.textContent = 'Signing in…'; }
+
+    try {
+      if (navigator.onLine) {
+        const res = await fetch('/api/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ companyNo, password })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Login failed');
+        this.user = data.user;
+        this.token = data.token;
+        await this.saveSession();
+        if (this.user.mustChangePassword) {
+          this.showPasswordModal();
+        } else {
+          this.showMain();
+          this.toast('Welcome, ' + this.user.name);
+          Offline.sendPresence();
+        }
+      } else {
+        // Offline fallback: only if previously logged in with same company number
+        const session = await DB.getSession();
+        if (session?.user?.companyNo?.toUpperCase() === companyNo.toUpperCase() && session.token) {
+          this.user = session.user;
+          this.token = session.token;
+          this.showMain();
+          this.toast('Offline mode – using saved session');
+        } else {
+          throw new Error('You must log in online at least once');
+        }
+      }
+    } catch (e) {
+      if (errEl) {
+        errEl.textContent = e.message || 'Login failed';
+        errEl.classList.remove('hidden');
+      }
+      this.toast(e.message || 'Login failed', 'error');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = 'Log In'; }
+    }
+  },
+
+  authHeaders() {
+    return this.token
+      ? { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + this.token }
+      : { 'Content-Type': 'application/json' };
   },
 
   showLogin() {
@@ -38,13 +114,17 @@ const App = {
   },
 
   showMain() {
+    if (this.user?.mustChangePassword) {
+      this.showPasswordModal();
+      return;
+    }
     document.getElementById('screen-login').classList.remove('active');
     document.getElementById('screen-main').classList.add('active');
+    document.getElementById('modal-password')?.classList.add('hidden');
     this.updateHeader();
     this.applyRoleVisibility();
     this.navigate('home');
 
-    // Open pending deep-link door if any
     const pending = sessionStorage.getItem('pendingDoor');
     if (pending) {
       sessionStorage.removeItem('pendingDoor');
@@ -54,6 +134,48 @@ const App = {
       }, 300);
     }
   },
+
+  showPasswordModal() {
+    document.getElementById('screen-login')?.classList.remove('active');
+    document.getElementById('screen-main')?.classList.remove('active');
+    const modal = document.getElementById('modal-password');
+    if (modal) modal.classList.remove('hidden');
+    document.getElementById('new-password').value = '';
+    document.getElementById('new-password2').value = '';
+    document.getElementById('pw-error')?.classList.add('hidden');
+  },
+
+  async saveNewPassword() {
+    const p1 = document.getElementById('new-password')?.value || '';
+    const p2 = document.getElementById('new-password2')?.value || '';
+    const err = document.getElementById('pw-error');
+    if (p1.length < 4) {
+      if (err) { err.textContent = 'Password must be at least 4 characters'; err.classList.remove('hidden'); }
+      return;
+    }
+    if (p1 !== p2) {
+      if (err) { err.textContent = 'Passwords do not match'; err.classList.remove('hidden'); }
+      return;
+    }
+    try {
+      const res = await fetch('/api/users/password', {
+        method: 'POST',
+        headers: this.authHeaders(),
+        body: JSON.stringify({ newPassword: p1 })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed');
+      this.user.mustChangePassword = false;
+      await this.saveSession();
+      document.getElementById('modal-password')?.classList.add('hidden');
+      this.showMain();
+      this.toast('Password updated');
+      Offline.sendPresence();
+    } catch (e) {
+      if (err) { err.textContent = e.message; err.classList.remove('hidden'); }
+    }
+  },
+
 
   updateHeader() {
     const badge = document.getElementById('user-badge');
@@ -87,16 +209,14 @@ const App = {
   },
 
   bindEvents() {
-    // Role selection
-    document.querySelectorAll('.role-btn').forEach(btn => {
-      btn.addEventListener('click', async () => {
-        const name = document.getElementById('input-name').value.trim() || 'Demo User';
-        const role = btn.dataset.role;
-        this.user = { id: uuid(), name, role };
-        await this.saveSession();
-        this.showMain();
-        this.toast(`Logged in as ${this.roleLabel(role)}`);
-      });
+    // Login
+    const doLogin = () => this.login();
+    document.getElementById('btn-login')?.addEventListener('click', doLogin);
+    document.getElementById('input-password')?.addEventListener('keydown', e => {
+      if (e.key === 'Enter') doLogin();
+    });
+    document.getElementById('input-company')?.addEventListener('keydown', e => {
+      if (e.key === 'Enter') document.getElementById('input-password')?.focus();
     });
 
     // Menu
@@ -112,8 +232,13 @@ const App = {
     document.getElementById('btn-logout').addEventListener('click', async () => {
       await DB.clearSession();
       this.user = null;
+      this.token = null;
       this.stopScanner();
       this.showLogin();
+      const c = document.getElementById('input-company');
+      const p = document.getElementById('input-password');
+      if (c) c.value = '';
+      if (p) p.value = '';
     });
 
     // Create door
@@ -150,6 +275,9 @@ const App = {
     });
     const printBtn = document.getElementById('btn-print-stickers');
     if (printBtn) printBtn.addEventListener('click', () => this.printStickerSheet());
+
+    document.getElementById('btn-save-password')?.addEventListener('click', () => this.saveNewPassword());
+    document.getElementById('btn-create-user')?.addEventListener('click', () => this.createUser());
   },
 
   navigate(view) {
@@ -168,7 +296,8 @@ const App = {
       doors: 'All Doors',
       dashboard: 'Dashboard',
       assign: 'Assign Doors',
-      stickers: 'Sticker Sheet'
+      stickers: 'Sticker Sheet',
+      users: 'Manage Users'
     };
     document.getElementById('header-title').textContent = titles[view] || 'Mine Door QR';
 
@@ -182,6 +311,7 @@ const App = {
       case 'dashboard': this.renderDashboard(); break;
       case 'assign': this.renderAssign(); break;
       case 'stickers': this.renderStickers(); break;
+      case 'users': this.renderUsers(); break;
     }
   },
 
@@ -199,7 +329,10 @@ const App = {
       b.onclick = () => this.navigate(view);
       actions.appendChild(b);
     };
-    if (this.user.role === 'admin') add('Create QR Code', 'create');
+    if (this.user.role === 'admin') {
+      add('Create QR Code', 'create');
+      add('Manage Users', 'users');
+    }
     add('Scan QR', 'scan');
     add('View Doors', 'doors');
     if (['vent_engineer', 'mine_captain'].includes(this.user.role)) add('Dashboard', 'dashboard');
@@ -240,13 +373,11 @@ const App = {
       try {
         const res = await fetch('/api/doors', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: this.authHeaders(),
           body: JSON.stringify({
             location,
             zone: zone || null,
-            notes: notes || null,
-            createdBy: this.user.id,
-            userName: this.user.name
+            notes: notes || null
           })
         });
         if (!res.ok) throw new Error('API error');
@@ -462,7 +593,9 @@ const App = {
     }
 
     const canPaste = this.user.role === 'vent_officer' && door.status === 'created';
-    const canClose = this.user.role === 'shift_boss' && door.status === 'pasted';
+    const assignedToMe = !door.assignedShiftBossId || door.assignedShiftBossId === this.user.id;
+    const canClose = this.user.role === 'shift_boss' && door.status === 'pasted' && assignedToMe;
+    const notAssigned = this.user.role === 'shift_boss' && door.status === 'pasted' && !assignedToMe;
     const isReadOnly = !canPaste && !canClose;
 
     let actionHtml = '';
@@ -470,6 +603,8 @@ const App = {
       actionHtml = `<button class="btn primary full" id="btn-confirm-paste">Confirm QR Pasted</button>`;
     } else if (canClose) {
       actionHtml = `<button class="btn primary full" id="btn-confirm-close">Confirm Door Closed</button>`;
+    } else if (notAssigned) {
+      actionHtml = `<p class="muted" style="color:var(--warning)">This door is not assigned to you. Only the assigned Shift Boss can close it.</p>`;
     } else {
       actionHtml = `<p class="muted">No action available for your role on this door right now.</p>`;
     }
@@ -582,12 +717,20 @@ const App = {
       list.innerHTML = '<p class="muted">No doors to assign.</p>';
       return;
     }
-    // Demo shift bosses
-    const bosses = [
-      { id: 'sb1', name: 'Shift Boss A' },
-      { id: 'sb2', name: 'Shift Boss B' },
-      { id: 'sb3', name: 'Shift Boss C' }
-    ];
+    let bosses = [];
+    try {
+      if (navigator.onLine) {
+        const res = await fetch('/api/shift-bosses', { headers: this.authHeaders() });
+        if (res.ok) bosses = await res.json();
+      }
+    } catch (_) {}
+    if (bosses.length === 0) {
+      bosses = [
+        { id: 'sb1', name: 'Shift Boss A' },
+        { id: 'sb2', name: 'Shift Boss B' },
+        { id: 'sb3', name: 'Shift Boss C' }
+      ];
+    }
     list.innerHTML = doors.map(d => `
       <div class="door-item status-${d.status}">
         <div class="loc">${d.location} <span class="badge ${d.status}">${d.status}</span></div>
@@ -719,6 +862,103 @@ const App = {
     this.renderStickerPreview().then(() => {
       setTimeout(() => window.print(), 300);
     });
+  },
+
+
+  // ---------- Manage Users (Admin) ----------
+  async renderUsers() {
+    const list = document.getElementById('users-list');
+    if (!list) return;
+    try {
+      const res = await fetch('/api/users', { headers: this.authHeaders() });
+      if (!res.ok) throw new Error('Failed to load users');
+      const users = await res.json();
+      if (users.length === 0) {
+        list.innerHTML = '<p class="muted">No users yet.</p>';
+        return;
+      }
+      const roleLabel = r => this.roleLabel(r);
+      list.innerHTML = users.map(u => `
+        <div class="door-item ${u.active ? '' : 'status-created'}">
+          <div class="loc">
+            ${u.name}
+            <span class="badge ${u.active ? 'closed' : 'inactive'}">${u.active ? 'active' : 'inactive'}</span>
+          </div>
+          <div class="meta">${u.companyNo} · ${roleLabel(u.role)}</div>
+          <div class="user-actions">
+            <button class="btn secondary" data-toggle-user="${u.id}" data-active="${u.active}">
+              ${u.active ? 'Deactivate' : 'Activate'}
+            </button>
+            <button class="btn secondary" data-reset-pw="${u.id}">Reset Password</button>
+          </div>
+        </div>
+      `).join('');
+
+      list.querySelectorAll('[data-toggle-user]').forEach(btn => {
+        btn.onclick = async () => {
+          const id = btn.dataset.toggleUser;
+          const currentlyActive = btn.dataset.active === 'true';
+          const res = await fetch('/api/users/' + id, {
+            method: 'PATCH',
+            headers: this.authHeaders(),
+            body: JSON.stringify({ active: !currentlyActive })
+          });
+          const data = await res.json();
+          if (!res.ok) { this.toast(data.error || 'Failed', 'error'); return; }
+          this.toast(currentlyActive ? 'User deactivated' : 'User activated');
+          this.renderUsers();
+        };
+      });
+
+      list.querySelectorAll('[data-reset-pw]').forEach(btn => {
+        btn.onclick = async () => {
+          const id = btn.dataset.resetPw;
+          const temp = prompt('Enter temporary password for this user (min 4 chars):');
+          if (!temp || temp.length < 4) { this.toast('Password too short', 'error'); return; }
+          const res = await fetch('/api/users/' + id, {
+            method: 'PATCH',
+            headers: this.authHeaders(),
+            body: JSON.stringify({ resetPassword: temp })
+          });
+          const data = await res.json();
+          if (!res.ok) { this.toast(data.error || 'Failed', 'error'); return; }
+          this.toast('Password reset – user must change it on next login');
+        };
+      });
+    } catch (e) {
+      list.innerHTML = `<p class="muted">${e.message}</p>`;
+    }
+  },
+
+  async createUser() {
+    const companyNo = (document.getElementById('user-company')?.value || '').trim();
+    const name = (document.getElementById('user-name')?.value || '').trim();
+    const role = document.getElementById('user-role')?.value;
+    const password = (document.getElementById('user-password')?.value || '').trim();
+    if (!companyNo || !name || !role || !password) {
+      this.toast('All fields required', 'error');
+      return;
+    }
+    if (password.length < 4) {
+      this.toast('Password min 4 characters', 'error');
+      return;
+    }
+    try {
+      const res = await fetch('/api/users', {
+        method: 'POST',
+        headers: this.authHeaders(),
+        body: JSON.stringify({ companyNo, name, role, password })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed');
+      this.toast('User created: ' + data.companyNo);
+      document.getElementById('user-company').value = '';
+      document.getElementById('user-name').value = '';
+      document.getElementById('user-password').value = '';
+      this.renderUsers();
+    } catch (e) {
+      this.toast(e.message, 'error');
+    }
   },
 
   // ---------- Utils ----------

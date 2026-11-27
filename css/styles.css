@@ -610,3 +610,50 @@ input:focus, textarea:focus, select:focus {
   margin-top: 2px;
   flex-shrink: 0;
 }
+
+.login-error {
+  color: #fca5a5;
+  background: rgba(239, 68, 68, 0.15);
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  margin-top: 12px;
+  text-align: center;
+}
+
+/* Modal */
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.75);
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.modal.hidden { display: none; }
+.modal-card {
+  background: var(--surface);
+  border-radius: 16px;
+  padding: 24px 20px;
+  width: 100%;
+  max-width: 400px;
+  box-shadow: 0 20px 40px rgba(0,0,0,0.5);
+}
+.modal-card h2 { margin: 0 0 8px; }
+
+.user-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.user-actions .btn {
+  padding: 8px 12px;
+  font-size: 0.85rem;
+}
+.badge.inactive {
+  background: var(--danger);
+  color: #fff;
+}
